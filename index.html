@@ -2,8 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <title>體感 3D 跑酷 (Temple Run 風格)</title>
-  <!-- 引入穩定版本的 TensorFlow.js 與 TM Pose SDK -->
+  <title>體感 3D 跑酷 - 即時同步版</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.3/dist/teachablemachine-pose.min.js"></script>
   <style>
@@ -84,10 +83,11 @@
       background: #000;
       border: 2px solid #334155;
     }
-    /* 取消鏡像翻轉，恢復真實物理方向 */
+    /* 鏡像翻轉改回自拍鏡效果 */
     #webcamCanvas {
       width: 260px;
       height: 260px;
+      transform: scaleX(-1);
     }
 
     .hud-box {
@@ -114,31 +114,29 @@
       height: 100%;
       width: 0%;
       background: #10b981;
-      transition: width 0.1s;
+      transition: width 0.05s;
     }
   </style>
 </head>
 <body>
 
   <header>
-    <h1>🏃 體感 3D 跑酷遊戲 (Temple Run 視角)</h1>
+    <h1>🏃 體感 3D 跑酷遊戲 (即時同步版)</h1>
     <button class="btn" id="startBtn" onclick="initSystem()">點擊啟動相機並開始</button>
   </header>
 
-  <!-- 操作說明 -->
   <div class="rules-card">
-    <b>【遊戲操作說明（真實非鏡像視角）】</b><br>
+    <b>【遊戲操作說明（自拍鏡像視角）】</b><br>
     • <b>目標</b>：小人不斷往前衝刺，用肢體控制小人閃避迎面而來的障礙物！<br>
-    • <b>體感動作對應</b>：<br>
-    &nbsp;&nbsp;• <b>up（向上跳躍）</b>：雙手舉高過肩，跳躍避開地刺障礙。<br>
-    &nbsp;&nbsp;• <b>down（滑行蹲下）</b>：微蹲，滑行通過高架橫樑。<br>
+    • <b>動作對應</b>：<br>
+    &nbsp;&nbsp;• <b>up（向上跳躍）</b>：手臂向上舉起，小人跳躍避開地刺。<br>
+    &nbsp;&nbsp;• <b>down（滑行蹲下）</b>：身體微蹲，小人蹲下避開高架橫樑。<br>
     &nbsp;&nbsp;• <b>left（左移跑道） / right（右移跑道）</b>：往左或往右側平舉手臂切換跑道避開巨石。<br>
-    &nbsp;&nbsp;• <b>default（正常跑步）</b>：雙手放下，回歸中央跑道跑步。<br>
-    • <i>(亦支援鍵盤 ↑ ↓ ← → 與 Space 作為手動測試操作)</i>
+    &nbsp;&nbsp;• <b>default（正常跑步）</b>：雙手放下，回歸中央跑道正常奔跑。<br>
+    • <i>(亦支援鍵盤 ↑ ↓ ← → 與 Space 作為測試操作)</i>
   </div>
 
   <div class="game-layout">
-    <!-- 主遊戲畫面 -->
     <div class="card">
       <div class="hud-box">
         <span>分數: <span id="scoreVal" class="hud-tag">0</span></span>
@@ -148,16 +146,15 @@
       <canvas id="gameCanvas" width="480" height="520"></canvas>
     </div>
 
-    <!-- 攝影機畫面、辨識結果與信心度 -->
     <div class="card" style="width: 284px;">
-      <div style="font-size: 0.85rem; margin-bottom: 6px; color: #94a3b8;">真實鏡頭（非鏡像）與骨架檢視</div>
+      <div style="font-size: 0.85rem; margin-bottom: 6px; color: #94a3b8;">攝影機（鏡像視角）與骨架</div>
       <div class="webcam-container">
         <canvas id="webcamCanvas" width="260" height="260"></canvas>
       </div>
 
       <div class="hud-box" style="flex-direction: column; gap: 4px; margin-top: 10px;">
         <div style="display: flex; justify-content: space-between;">
-          <span>目前動作: <b id="currentPoseVal" style="color: #f59e0b;">待機中</b></span>
+          <span>偵測動作: <b id="currentPoseVal" style="color: #f59e0b;">待機中</b></span>
           <span>信心度: <b id="confidenceVal">0%</b></span>
         </div>
         <div class="confidence-meter">
@@ -194,15 +191,14 @@
       } catch (e) {}
     }
 
-    // --- 跑道與小人 3D 透視座標 ---
-    // 跑道分為 0: 左, 1: 中, 2: 右
+    // --- 跑道與小人設定 ---
     const LANES_X = [140, 240, 340];
     
     let runner = {
       lane: 1,         // 0: 左, 1: 中, 2: 右
       currentX: 240,
       y: 440,
-      jumpOffset: 0,   // 跳躍高度
+      jumpOffset: 0,
       isJumping: false,
       isSliding: false,
       runAnim: 0,
@@ -215,102 +211,63 @@
     let isRunning = false;
     let spawnTimer = 0;
     let groundScroll = 0;
+    let lastAppliedPose = '';
 
-    // --- 動作狀態機 ---
-    let currentPose = 'default';
-    const WINDOW_SIZE = 5;
-    let poseWindow = [];
+    // 即時套用手勢動作（零延遲）
+    function applyPoseImmediate(pose) {
+      const p = pose.toLowerCase();
 
-    function processPrediction(prediction) {
-      const sorted = [...prediction].sort((a, b) => b.probability - a.probability);
-      const top1 = sorted[0];
-      const top2 = sorted[1];
+      // UI 顯示即時同步
+      let actionText = "跑步中";
+      if (p === 'up') actionText = "跳躍！";
+      else if (p === 'down') actionText = "滑行蹲下！";
+      else if (p === 'left') actionText = "向左移";
+      else if (p === 'right') actionText = "向右移";
+      else actionText = "跑步中";
+      document.getElementById('actionVal').innerText = actionText;
 
-      let rawPose = top1.className.toLowerCase();
-      const prob = top1.probability;
+      if (p === lastAppliedPose) return;
+      lastAppliedPose = p;
 
-      // 競態壓制（right 與 down）
-      if (top1.className === 'right' && top2.className === 'down') {
-        if (top1.probability - top2.probability < 0.18) {
-          rawPose = 'default';
-        }
-      }
-
-      const threshold = (rawPose === 'right') ? 0.60 : 0.72;
-      if (prob < threshold) rawPose = 'default';
-
-      // 信心度更新
-      const percent = Math.round(prob * 100);
-      document.getElementById('currentPoseVal').innerText = top1.className;
-      document.getElementById('confidenceVal').innerText = `${percent}%`;
-      document.getElementById('confidenceBar').style.width = `${percent}%`;
-
-      poseWindow.push(rawPose);
-      if (poseWindow.length > WINDOW_SIZE) poseWindow.shift();
-
-      const counts = {};
-      poseWindow.forEach(p => counts[p] = (counts[p] || 0) + 1);
-
-      let majority = 'default';
-      for (const [p, count] of Object.entries(counts)) {
-        if (count >= 3) { majority = p; break; }
-      }
-
-      applyPoseToAction(majority);
-    }
-
-    // 將手勢轉化為 Temple Run 動作
-    function applyPoseToAction(pose) {
-      if (pose === currentPose) return;
-      currentPose = pose;
-
-      switch(pose) {
-        case 'up': // 向上跳
-          if (!runner.isJumping) {
-            runner.isJumping = true;
-            runner.isSliding = false;
-            runner.jumpOffset = 0;
-            document.getElementById('actionVal').innerText = "跳躍！";
-            playBeep(600, 0.1);
-          }
+      switch(p) {
+        case 'up':
+          runner.isJumping = true;
+          runner.isSliding = false;
+          playBeep(600, 0.08);
           break;
-        case 'down': // 蹲下滑行
+        case 'down':
           runner.isSliding = true;
           runner.isJumping = false;
-          runner.jumpOffset = 0;
-          document.getElementById('actionVal').innerText = "滑行蹲下！";
-          playBeep(350, 0.1);
+          playBeep(350, 0.08);
           break;
-        case 'left': // 往左換道
-          if (runner.lane > 0) runner.lane--;
+        case 'left':
+          runner.lane = 0;
           runner.isSliding = false;
-          document.getElementById('actionVal').innerText = "向左移";
-          playBeep(480, 0.08);
+          playBeep(480, 0.06);
           break;
-        case 'right': // 往右換道
-          if (runner.lane < 2) runner.lane++;
+        case 'right':
+          runner.lane = 2;
           runner.isSliding = false;
-          document.getElementById('actionVal').innerText = "向右移";
-          playBeep(480, 0.08);
+          playBeep(480, 0.06);
           break;
         case 'default':
         default:
+          runner.lane = 1;
           runner.isSliding = false;
-          document.getElementById('actionVal').innerText = "跑步中";
           break;
       }
     }
 
-    // 鍵盤備援控制
+    // 鍵盤備援操作
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowUp') applyPoseToAction('up');
-      if (e.key === 'ArrowDown') applyPoseToAction('down');
-      if (e.key === 'ArrowLeft') applyPoseToAction('left');
-      if (e.key === 'ArrowRight') applyPoseToAction('right');
-      if (e.key === ' ') applyPoseToAction('default');
+      if (e.key === 'ArrowUp') applyPoseImmediate('up');
+      if (e.key === 'ArrowDown') applyPoseImmediate('down');
+      if (e.key === 'ArrowLeft') applyPoseImmediate('left');
+      if (e.key === 'ArrowRight') applyPoseImmediate('right');
+      if (e.key === ' ') applyPoseImmediate('default');
     });
 
-    // --- 系統啟動流程（真實方向攝影機）---
+    // --- 模型啟動流程 (自拍鏡像模式) ---
     let model = null;
     let webcam = null;
 
@@ -322,10 +279,9 @@
       try {
         model = await tmPose.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
 
-        // 【關鍵】：flip 設為 false，取消鏡像，回復真實方向！
-        btn.innerText = "啟動真實鏡頭...";
+        // flip = true 開啟自拍鏡像
         const size = 260;
-        const flip = false; 
+        const flip = true; 
         webcam = new tmPose.Webcam(size, size, flip);
         await webcam.setup();
         await webcam.play();
@@ -353,11 +309,25 @@
           const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
           const prediction = await model.predict(posenetOutput);
 
+          // 繪製骨架
           if (pose) {
             tmPose.drawKeypoints(pose.keypoints, 0.35, webcamCtx);
             tmPose.drawSkeleton(pose.keypoints, 0.35, webcamCtx);
           }
-          processPrediction(prediction);
+
+          // 排序最高信心度
+          const sorted = [...prediction].sort((a, b) => b.probability - a.probability);
+          const top = sorted[0];
+
+          const percent = Math.round(top.probability * 100);
+          document.getElementById('currentPoseVal').innerText = top.className;
+          document.getElementById('confidenceVal').innerText = `${percent}%`;
+          document.getElementById('confidenceBar').style.width = `${percent}%`;
+
+          // 信心度超過 0.55 即時觸發動作，不延遲
+          if (top.probability > 0.55) {
+            applyPoseImmediate(top.className);
+          }
         } catch (e) {}
       }
       requestAnimationFrame(predictLoop);
@@ -376,72 +346,68 @@
       runner.isSliding = false;
       runner.jumpOffset = 0;
       runner.invulnerable = 60;
+      lastAppliedPose = '';
       document.getElementById('scoreVal').innerText = score;
       document.getElementById('hpVal').innerText = hp;
+      document.getElementById('actionVal').innerText = "跑步中";
     }
 
-    // 生成三種不同障礙物
     function spawnObstacle() {
-      const types = ['rock', 'low_hurdle', 'high_bar']; // 巨石(閃左右)、矮障礙(跳)、橫樑(蹲)
+      const types = ['rock', 'low_hurdle', 'high_bar'];
       const type = types[Math.floor(Math.random() * types.length)];
       const lane = Math.floor(Math.random() * 3);
 
       obstacles.push({
         lane: lane,
         type: type,
-        z: 0 // 0 為遠端地平線，1 為玩家身邊
+        z: 0
       });
     }
 
     function gameLoop() {
       if (!isRunning) return;
 
-      // 繪製背景與透視跑道
       drawTempleRunTrack();
 
-      // 小人橫向平滑切換跑道
-      runner.currentX += (LANES_X[runner.lane] - runner.currentX) * 0.2;
+      // 小人切換跑道插值平滑
+      runner.currentX += (LANES_X[runner.lane] - runner.currentX) * 0.25;
 
-      // 跳躍物理計算
+      // 跳躍平滑動畫
       if (runner.isJumping) {
-        runner.jumpOffset += 3.5;
-        if (runner.jumpOffset > 50) {
+        runner.jumpOffset += 4;
+        if (runner.jumpOffset > 55) {
           runner.isJumping = false;
         }
       } else if (runner.jumpOffset > 0) {
-        runner.jumpOffset -= 3.5;
+        runner.jumpOffset -= 4;
         if (runner.jumpOffset < 0) runner.jumpOffset = 0;
       }
 
-      // 繪製小人
       drawRunner();
 
-      // 障礙物生成計時
+      // 生成障礙物
       spawnTimer++;
       if (spawnTimer > Math.max(75, 120 - score * 2)) {
         spawnObstacle();
         spawnTimer = 0;
       }
 
-      // 更新障礙物移動與碰撞
+      // 更新障礙物
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
-        obs.z += 0.012 + Math.min(score * 0.0005, 0.015); // 由遠到近飛行
+        obs.z += 0.012 + Math.min(score * 0.0005, 0.012);
 
         draw3DObstacle(obs);
 
-        // 碰撞判定 (當障礙物接近玩家時 z 在 0.85 ~ 1.0)
+        // 碰撞判定區間
         if (obs.z >= 0.85 && obs.z <= 0.98) {
           let hit = false;
 
           if (obs.type === 'rock') {
-            // 巨石：若小人同一軌道則撞擊
             if (runner.lane === obs.lane) hit = true;
           } else if (obs.type === 'low_hurdle') {
-            // 矮障礙：同一軌道且沒有跳躍則撞擊
             if (runner.lane === obs.lane && runner.jumpOffset < 25) hit = true;
           } else if (obs.type === 'high_bar') {
-            // 高橫樑：同一軌道且沒有蹲下滑行則撞擊
             if (runner.lane === obs.lane && !runner.isSliding) hit = true;
           }
 
@@ -459,7 +425,7 @@
           }
         }
 
-        // 超越玩家得分
+        // 成功超越得分
         if (obs.z > 1.05) {
           score++;
           document.getElementById('scoreVal').innerText = score;
@@ -472,15 +438,14 @@
       requestAnimationFrame(gameLoop);
     }
 
-    // 繪製 3D 透視跑道
+    // 繪製跑道
     function drawTempleRunTrack() {
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
 
-      // 遠方地平線
       const horizonY = 160;
 
-      // 跑道底板 (梯形透視)
+      // 跑道底板
       ctx.beginPath();
       ctx.moveTo(180, horizonY);
       ctx.lineTo(300, horizonY);
@@ -489,7 +454,7 @@
       ctx.fillStyle = '#1e293b';
       ctx.fill();
 
-      // 跑道邊界線
+      // 跑道外緣線
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -497,7 +462,7 @@
       ctx.moveTo(300, horizonY); ctx.lineTo(440, 520);
       ctx.stroke();
 
-      // 內部分道虛線
+      // 分道虛線
       ctx.strokeStyle = '#475569';
       ctx.lineWidth = 2;
       ctx.setLineDash([15, 15]);
@@ -507,7 +472,7 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // 地面滾動橫線 (營造速度感)
+      // 地面滾動線
       groundScroll = (groundScroll + 4) % 40;
       for (let y = horizonY + groundScroll; y < 520; y += 40) {
         const factor = (y - horizonY) / (520 - horizonY);
@@ -521,13 +486,13 @@
       }
     }
 
-    // 繪製奔跑小人 (包含跑步動態肢體)
+    // 繪製小人
     function drawRunner() {
       const x = runner.currentX;
       const y = runner.y - runner.jumpOffset;
 
       if (runner.invulnerable > 0 && Math.floor(runner.invulnerable / 5) % 2 === 0) {
-        return; // 無敵受傷閃爍
+        return;
       }
 
       runner.runAnim += 0.2;
@@ -537,58 +502,53 @@
       ctx.translate(x, y);
 
       if (runner.isSliding) {
-        // 滑行蹲下姿態：壓扁小人
+        // 蹲下滑行姿態
         ctx.fillStyle = '#38bdf8';
         ctx.beginPath();
         ctx.ellipse(0, 10, 22, 10, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
-        ctx.arc(12, 5, 8, 0, Math.PI * 2); // 頭
+        ctx.arc(12, 5, 8, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        // 正常站立/奔跑/跳躍小人
-        // 頭部
+        // 正常站立奔跑小人
         ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
-        ctx.arc(0, -32, 10, 0, Math.PI * 2);
+        ctx.arc(0, -32, 10, 0, Math.PI * 2); // 頭
         ctx.fill();
 
-        // 身體
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 6;
         ctx.beginPath();
         ctx.moveTo(0, -22);
-        ctx.lineTo(0, -5);
+        ctx.lineTo(0, -5); // 身體
         ctx.stroke();
 
-        // 手臂擺動
         ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.moveTo(-12, -18);
         ctx.lineTo(0, -20);
-        ctx.lineTo(12, -18);
+        ctx.lineTo(12, -18); // 手臂
         ctx.stroke();
 
-        // 腿部奔跑交替擺動
         ctx.beginPath();
         ctx.moveTo(0, -5);
-        ctx.lineTo(-8, 15 + legSwing);
+        ctx.lineTo(-8, 15 + legSwing); // 左腿
         ctx.moveTo(0, -5);
-        ctx.lineTo(8, 15 - legSwing);
+        ctx.lineTo(8, 15 - legSwing);  // 右腿
         ctx.stroke();
       }
 
       ctx.restore();
     }
 
-    // 繪製 3D 透視障礙物
+    // 繪製 3D 障礙物
     function draw3DObstacle(obs) {
       const horizonY = 160;
       const z = obs.z;
       const y = horizonY + (520 - horizonY) * z;
       
-      // 計算在透視中該跑道的中心 X
       const factor = (y - horizonY) / (520 - horizonY);
       const laneWidth = (300 - 180 + (440 - 40 - (300 - 180)) * factor) / 3;
       const leftBoundary = 180 - (180 - 40) * factor;
@@ -600,7 +560,6 @@
       ctx.scale(scale, scale);
 
       if (obs.type === 'rock') {
-        // 巨石 (需左右閃避)
         ctx.fillStyle = '#ef4444';
         ctx.beginPath();
         ctx.arc(0, -15, 20, 0, Math.PI * 2);
@@ -609,7 +568,6 @@
         ctx.lineWidth = 3;
         ctx.stroke();
       } else if (obs.type === 'low_hurdle') {
-        // 地刺矮木 (需跳躍 UP)
         ctx.fillStyle = '#f59e0b';
         ctx.fillRect(-22, -8, 44, 10);
         ctx.fillStyle = '#dc2626';
@@ -618,10 +576,8 @@
         ctx.moveTo(5, -8); ctx.lineTo(10, -20); ctx.lineTo(15, -8);
         ctx.fill();
       } else if (obs.type === 'high_bar') {
-        // 高位橫樑 (需蹲下滑行 DOWN)
         ctx.fillStyle = '#8b5cf6';
         ctx.fillRect(-26, -55, 52, 12);
-        // 支柱
         ctx.strokeStyle = '#64748b';
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -647,7 +603,6 @@
       document.getElementById('actionVal').innerText = "撞毀停止";
     }
 
-    // 初次載入繪製背景跑道
     drawTempleRunTrack();
   </script>
 </body>
