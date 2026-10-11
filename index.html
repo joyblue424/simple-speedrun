@@ -112,8 +112,6 @@
       object-fit: cover;
       transform: scaleX(-1);
     }
-    
-    /* 核心修復：強制讓骨架畫布背景為完全透明 */
     #poseOverlay {
       position: absolute;
       top: 0;
@@ -161,11 +159,12 @@
   </header>
 
   <div class="toolbar">
-    <label for="cameraSelect" style="font-size: 0.85rem;">切換攝影機設備：</label>
+    <label for="cameraSelect" style="font-size: 0.85rem;">切換攝影機：</label>
     <select id="cameraSelect" onchange="changeCamera()"></select>
     <span id="camStatus" style="font-size: 0.85rem; color: #38bdf8;">等待啟動...</span>
   </div>
 
+  <!-- 要求 1：遊戲說明 -->
   <div class="rules-card">
     <b>【遊戲操作說明】</b><br>
     • <b>目標</b>：透過鏡頭比出身體姿勢，避開四周緩慢逼近的紅色障礙物。<br>
@@ -188,7 +187,7 @@
       <canvas id="gameCanvas" width="460" height="460"></canvas>
     </div>
 
-    <!-- 攝影機畫面、辨識結果與信心度 -->
+    <!-- 要求 2：攝影機畫面、辨識結果與信心度 -->
     <div class="card" style="width: 284px;">
       <div style="font-size: 0.85rem; margin-bottom: 6px; color: #94a3b8;">攝影機與骨架即時預覽</div>
       <div class="webcam-container">
@@ -218,6 +217,12 @@
     const poseCtx = poseCanvas.getContext('2d');
     const cameraSelect = document.getElementById('cameraSelect');
     const camStatus = document.getElementById('camStatus');
+
+    // 離屏畫布：專門將視訊正規化為 257x257 餵給 PoseNet
+    const offscreenCanvas = document.createElement('canvas');
+    offscreenCanvas.width = 257;
+    offscreenCanvas.height = 257;
+    const offscreenCtx = offscreenCanvas.getContext('2d');
 
     const CENTER_X = 230;
     const CENTER_Y = 230;
@@ -249,7 +254,7 @@
     let trackGlowColor = '#1e293b';
     let currentStream = null;
 
-    // 音效
+    // 音效合成器 (要求 3)
     let audioCtx = null;
     function playBeep(freq = 440, duration = 0.08) {
       try {
@@ -310,7 +315,7 @@
       }
     }
 
-    // --- 系統啟動流程 ---
+    // 系統初始化
     let model = null;
     async function initSystem() {
       const btn = document.getElementById('startBtn');
@@ -326,7 +331,7 @@
         btn.innerText = "下載模型中...";
 
         model = await tmPose.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
-        camStatus.innerText = "運行中";
+        camStatus.innerText = "模型載入成功";
         btn.innerText = "重新開始遊戲";
         btn.disabled = false;
 
@@ -342,7 +347,7 @@
       }
     }
 
-    // 動作平滑處理
+    // 動作平滑與競態抑制
     const WINDOW_SIZE = 5;
     let poseWindow = [];
 
@@ -354,6 +359,7 @@
       let rawPose = top1.className.toLowerCase();
       const prob = top1.probability;
 
+      // 競態抑制（right 與 down）
       if (top1.className === 'right' && top2.className === 'down') {
         if (top1.probability - top2.probability < 0.18) {
           rawPose = 'default';
@@ -363,6 +369,7 @@
       const threshold = (rawPose === 'right') ? 0.60 : 0.72;
       if (prob < threshold) rawPose = 'default';
 
+      // 信心度更新 (要求 2)
       const percent = Math.round(prob * 100);
       document.getElementById('currentPoseVal').innerText = top1.className;
       document.getElementById('confidenceVal').innerText = `${percent}%`;
@@ -384,6 +391,7 @@
       }
     }
 
+    // 畫面變化 (要求 3)
     function changeLane(lane) {
       currentLaneName = lane;
       if (LANES[lane]) {
@@ -401,27 +409,46 @@
       }
     }
 
-    // 推論迴圈
+    // 核心修復：穩定的推論迴圈（透過 Offscreen Canvas 轉接）
     async function predictLoop() {
-      if (video.readyState >= 2 && model) {
+      if (video.readyState >= 2 && model && video.videoWidth > 0) {
         try {
-          const { pose, posenetOutput } = await model.estimatePose(video);
+          // 將視訊畫面轉繪至 257x257 正規化畫布
+          offscreenCtx.drawImage(video, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+
+          // 傳送正規化畫布給 PoseNet
+          const { pose, posenetOutput } = await model.estimatePose(offscreenCanvas);
           const prediction = await model.predict(posenetOutput);
 
-          // 保持畫布清空為透明
+          // 繪製骨架疊加層至畫面 (縮放至 260x260 畫布)
           poseCtx.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
           if (pose) {
-            tmPose.drawKeypoints(pose.keypoints, 0.5, poseCtx);
-            tmPose.drawSkeleton(pose.keypoints, 0.5, poseCtx);
+            const scaleX = poseCanvas.width / offscreenCanvas.width;
+            const scaleY = poseCanvas.height / offscreenCanvas.height;
+
+            // 縮放關節點以精準吻合顯示畫布
+            const scaledPose = {
+              ...pose,
+              keypoints: pose.keypoints.map(k => ({
+                ...k,
+                position: { x: k.position.x * scaleX, y: k.position.y * scaleY }
+              }))
+            };
+
+            tmPose.drawKeypoints(scaledPose.keypoints, 0.5, poseCtx);
+            tmPose.drawSkeleton(scaledPose.keypoints, 0.5, poseCtx);
           }
 
           processPrediction(prediction);
-        } catch (e) {}
+        } catch (e) {
+          console.warn("推論畫格跳過：", e);
+        }
       }
+      // 保證即使出錯依然繼續下一幀
       window.requestAnimationFrame(predictLoop);
     }
 
-    // 鍵盤備援
+    // 鍵盤備援操作
     window.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowUp') changeLane('up');
       if (e.key === 'ArrowDown') changeLane('down');
@@ -430,7 +457,7 @@
       if (e.key === ' ') changeLane('default');
     });
 
-    // 遊戲重設
+    // 遊戲重設與迴圈
     function resetGame() {
       score = 0;
       hp = 3;
@@ -567,7 +594,7 @@
       document.getElementById('msgVal').innerText = '挑戰結束';
     }
 
-    // 初始清空畫布，不畫 GAME OVER
+    // 預設背景
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
     drawTracks();
