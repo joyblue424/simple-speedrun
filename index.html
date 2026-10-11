@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>四向避障跑酷 - 虛擬相機相容版</title>
+  <!-- 引入 TensorFlow.js 與 TM Pose SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.7.4/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.6/dist/teachablemachine-pose.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #090d16;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    header {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    h1 { font-size: 1.35rem; color: #38bdf8; }
+    .rules-card {
+      background: #1e293b;
+      padding: 12px 16px;
+      border-radius: 8px;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 14px;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      border-left: 4px solid #38bdf8;
+    }
+    .toolbar {
+      background: #1e293b;
+      padding: 10px 14px;
+      border-radius: 8px;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 14px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    select {
+      background: #0f172a;
+      color: #fff;
+      border: 1px solid #334155;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      flex: 1;
+      min-width: 200px;
+    }
+    .btn {
+      background: #0284c7;
+      color: white;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #0369a1; }
+    .btn:disabled { background: #475569; cursor: not-allowed; }
+
+    .game-layout {
+      display: flex;
+      gap: 16px;
+      width: 100%;
+      max-width: 900px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .card {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    canvas {
+      border-radius: 8px;
+      background: #020617;
+      display: block;
+    }
+    #gameCanvas { width: 460px; height: 460px; }
+    
+    .webcam-container {
+      position: relative;
+      width: 260px;
+      height: 260px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #000;
+      border: 2px solid #334155;
+    }
+    #webcamVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+    #poseOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+    }
+
+    .hud-box {
+      margin-top: 8px;
+      width: 100%;
+      display: flex;
+      justify-content: space-around;
+      font-size: 0.85rem;
+      background: #1f2937;
+      padding: 8px;
+      border-radius: 6px;
+    }
+    .hud-tag { font-weight: bold; color: #38bdf8; }
+    
+    .confidence-meter {
+      width: 100%;
+      background: #334155;
+      height: 10px;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .confidence-fill {
+      height: 100%;
+      width: 0%;
+      background: #10b981;
+      transition: width 0.1s;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🏃 體感四向跑酷遊戲</h1>
+    <button class="btn" id="startBtn" onclick="initSystem()">啟動攝影機</button>
+  </header>
+
+  <div class="toolbar">
+    <label for="cameraSelect" style="font-size: 0.85rem;">選擇攝影機設備：</label>
+    <select id="cameraSelect" onchange="changeCamera()"></select>
+    <span id="camStatus" style="font-size: 0.85rem; color: #38bdf8;">等待啟動...</span>
+  </div>
+
+  <div class="rules-card">
+    <b>【遊戲操作說明】</b><br>
+    • <b>目標</b>：透過鏡頭比出身體姿勢，避開四周緩慢逼近的紅色障礙物。<br>
+    • <b>動作類別（本專案訓練 5 種動作）</b>：<br>
+    &nbsp;&nbsp;1. <b>default (待機)</b>：雙手自然垂下放鬆回原點。<br>
+    &nbsp;&nbsp;2. <b>up (上)</b>：雙手舉高過頭切換至上軌道。<br>
+    &nbsp;&nbsp;3. <b>down (下)</b>：身體微蹲切換至下軌道。<br>
+    &nbsp;&nbsp;4. <b>left (左) / right (右)</b>：手臂向左或向右側平舉。<br>
+    • <i>(亦支援鍵盤 ↑ ↓ ← → 與 Space 作為備援操作)</i>
+  </div>
+
+  <div class="game-layout">
+    <!-- 主遊戲畫面 -->
+    <div class="card">
+      <div class="hud-box">
+        <span>分數: <span id="scoreVal" class="hud-tag">0</span></span>
+        <span>生命: <span id="hpVal" class="hud-tag">3</span></span>
+        <span>提示訊息: <span id="msgVal" class="hud-tag">點擊上方按鈕開始</span></span>
+      </div>
+      <canvas id="gameCanvas" width="460" height="460"></canvas>
+    </div>
+
+    <!-- 攝影機畫面、辨識結果與信心度 -->
+    <div class="card" style="width: 284px;">
+      <div style="font-size: 0.85rem; margin-bottom: 6px; color: #94a3b8;">攝影機與骨架即時預覽</div>
+      <div class="webcam-container">
+        <video id="webcamVideo" autoplay playsinline muted></video>
+        <canvas id="poseOverlay" width="260" height="260"></canvas>
+      </div>
+
+      <div class="hud-box" style="flex-direction: column; gap: 4px; margin-top: 10px;">
+        <div style="display: flex; justify-content: space-between;">
+          <span>目前動作: <b id="currentPoseVal" style="color: #f59e0b;">待機中</b></span>
+          <span>信心度: <b id="confidenceVal">0%</b></span>
+        </div>
+        <div class="confidence-meter">
+          <div class="confidence-fill" id="confidenceBar"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const MODEL_URL = "https://teachablemachine.withgoogle.com/models/ccGXFMyGc/";
+
+    const gameCanvas = document.getElementById('gameCanvas');
+    const ctx = gameCanvas.getContext('2d');
+    const video = document.getElementById('webcamVideo');
+    const poseCanvas = document.getElementById('poseOverlay');
+    const poseCtx = poseCanvas.getContext('2d');
+    const cameraSelect = document.getElementById('cameraSelect');
+    const camStatus = document.getElementById('camStatus');
+
+    const CENTER_X = 230;
+    const CENTER_Y = 230;
+    const TRACK_DIST = 120;
+
+    const LANES = {
+      default: { x: CENTER_X, y: CENTER_Y },
+      up:      { x: CENTER_X, y: CENTER_Y - TRACK_DIST },
+      down:    { x: CENTER_X, y: CENTER_Y + TRACK_DIST },
+      left:    { x: CENTER_X - TRACK_DIST, y: CENTER_Y },
+      right:   { x: CENTER_X + TRACK_DIST, y: CENTER_Y }
+    };
+
+    let player = {
+      x: CENTER_X,
+      y: CENTER_Y,
+      targetX: CENTER_X,
+      targetY: CENTER_Y,
+      radius: 18,
+      invulnerable: 0
+    };
+
+    let obstacles = [];
+    let score = 0;
+    let hp = 3;
+    let isRunning = false;
+    let spawnTimer = 0;
+    let currentLaneName = 'default';
+    let trackGlowColor = '#1e293b';
+    let currentStream = null;
+
+    // 音效
+    let audioCtx = null;
+    function playBeep(freq = 440, duration = 0.08) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (e) {}
+    }
+
+    // 列出可用的相機列表
+    async function listCameras() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(d => d.kind === 'videoinput');
+      cameraSelect.innerHTML = '';
+      videoDevices.forEach((dev, idx) => {
+        const opt = document.createElement('option');
+        opt.value = dev.deviceId;
+        opt.text = dev.label || `攝影機 ${idx + 1}`;
+        cameraSelect.appendChild(opt);
+      });
+    }
+
+    // 啟動相機（解除特定解析度限制，相容手機虛擬鏡頭）
+    async function startCamera(deviceId = null) {
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+      }
+
+      const constraints = {
+        video: deviceId ? { deviceId: { exact: deviceId } } : true,
+        audio: false
+      };
+
+      currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = currentStream;
+
+      return new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play();
+          camStatus.innerText = "相機正常連線";
+          resolve();
+        };
+      });
+    }
+
+    async function changeCamera() {
+      const deviceId = cameraSelect.value;
+      if (deviceId) {
+        camStatus.innerText = "切換鏡頭中...";
+        await startCamera(deviceId);
+      }
+    }
+
+    // --- 模型載入與啟動 ---
+    let model = null;
+    async function initSystem() {
+      const btn = document.getElementById('startBtn');
+      btn.disabled = true;
+      btn.innerText = "連線相機中...";
+      camStatus.innerText = "請求相機權限...";
+
+      try {
+        await startCamera();
+        await listCameras();
+
+        camStatus.innerText = "相機已啟動，下載姿勢模型...";
+        btn.innerText = "下載模型中...";
+
+        model = await tmPose.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+        camStatus.innerText = "系統運行中";
+        btn.innerText = "重新開始";
+        btn.disabled = false;
+
+        resetGame();
+        window.requestAnimationFrame(predictLoop);
+        window.requestAnimationFrame(gameLoop);
+      } catch (err) {
+        console.error("啟動錯誤：", err);
+        camStatus.innerText = "相機啟動失敗";
+        btn.disabled = false;
+        btn.innerText = "重試啟動";
+        alert("無法啟動相機！請確認：\n1. 網址列右上角相機圖示已設定為『一律允許』。\n2. Windows『手機連結』應用程式上的 S25 相機畫面正常未關閉。");
+      }
+    }
+
+    // 動作平滑處理
+    const WINDOW_SIZE = 5;
+    let poseWindow = [];
+
+    function processPrediction(prediction) {
+      const sorted = [...prediction].sort((a, b) => b.probability - a.probability);
+      const top1 = sorted[0];
+      const top2 = sorted[1];
+
+      let rawPose = top1.className.toLowerCase();
+      const prob = top1.probability;
+
+      if (top1.className === 'right' && top2.className === 'down') {
+        if (top1.probability - top2.probability < 0.18) {
+          rawPose = 'default';
+        }
+      }
+
+      const threshold = (rawPose === 'right') ? 0.60 : 0.72;
+      if (prob < threshold) rawPose = 'default';
+
+      const percent = Math.round(prob * 100);
+      document.getElementById('currentPoseVal').innerText = top1.className;
+      document.getElementById('confidenceVal').innerText = `${percent}%`;
+      document.getElementById('confidenceBar').style.width = `${percent}%`;
+
+      poseWindow.push(rawPose);
+      if (poseWindow.length > WINDOW_SIZE) poseWindow.shift();
+
+      const counts = {};
+      poseWindow.forEach(p => counts[p] = (counts[p] || 0) + 1);
+
+      let majority = 'default';
+      for (const [p, count] of Object.entries(counts)) {
+        if (count >= 3) { majority = p; break; }
+      }
+
+      if (majority !== currentLaneName) {
+        changeLane(majority);
+      }
+    }
+
+    function changeLane(lane) {
+      currentLaneName = lane;
+      if (LANES[lane]) {
+        player.targetX = LANES[lane].x;
+        player.targetY = LANES[lane].y;
+      }
+
+      if (lane !== 'default') {
+        trackGlowColor = '#38bdf8';
+        document.getElementById('msgVal').innerText = `跑道: ${lane.toUpperCase()}`;
+        playBeep(520, 0.08);
+      } else {
+        trackGlowColor = '#1e293b';
+        document.getElementById('msgVal').innerText = '原點待機';
+      }
+    }
+
+    // 推論迴圈
+    async function predictLoop() {
+      if (video.readyState >= 2 && model) {
+        try {
+          const { pose, posenetOutput } = await model.estimatePose(video);
+          const prediction = await model.predict(posenetOutput);
+
+          poseCtx.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+          if (pose) {
+            tmPose.drawKeypoints(pose.keypoints, 0.5, poseCtx);
+            tmPose.drawSkeleton(pose.keypoints, 0.5, poseCtx);
+          }
+
+          processPrediction(prediction);
+        } catch (e) {}
+      }
+      window.requestAnimationFrame(predictLoop);
+    }
+
+    // 鍵盤備援
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp') changeLane('up');
+      if (e.key === 'ArrowDown') changeLane('down');
+      if (e.key === 'ArrowLeft') changeLane('left');
+      if (e.key === 'ArrowRight') changeLane('right');
+      if (e.key === ' ') changeLane('default');
+    });
+
+    // 遊戲重設與邏輯
+    function resetGame() {
+      score = 0;
+      hp = 3;
+      obstacles = [];
+      isRunning = true;
+      spawnTimer = 0;
+      player.invulnerable = 60;
+      player.x = CENTER_X;
+      player.y = CENTER_Y;
+      player.targetX = CENTER_X;
+      player.targetY = CENTER_Y;
+      document.getElementById('scoreVal').innerText = score;
+      document.getElementById('hpVal').innerText = hp;
+      changeLane('default');
+    }
+
+    function spawnObstacle() {
+      const rand = Math.random();
+      let dir = 'up';
+      if (rand < 0.29) dir = 'up';
+      else if (rand < 0.58) dir = 'down';
+      else if (rand < 0.88) dir = 'left';
+      else dir = 'right';
+
+      const speed = 1.5 + Math.min(score * 0.04, 1.8);
+      let obs = { dir, x: 0, y: 0, vx: 0, vy: 0, r: 15 };
+
+      if (dir === 'up')    { obs.x = CENTER_X; obs.y = -25; obs.vy = speed; }
+      if (dir === 'down')  { obs.x = CENTER_X; obs.y = 485; obs.vy = -speed; }
+      if (dir === 'left')  { obs.x = -25; obs.y = CENTER_Y; obs.vx = speed; }
+      if (dir === 'right') { obs.x = 485; obs.y = CENTER_Y; obs.vx = -speed; }
+
+      obstacles.push(obs);
+    }
+
+    function gameLoop() {
+      if (!isRunning) return;
+
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+      drawTracks();
+
+      player.x += (player.targetX - player.x) * 0.2;
+      player.y += (player.targetY - player.y) * 0.2;
+
+      if (player.invulnerable > 0) player.invulnerable--;
+
+      if (player.invulnerable === 0 || Math.floor(player.invulnerable / 6) % 2 === 0) {
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+        ctx.fillStyle = player.invulnerable > 0 ? '#f59e0b' : '#38bdf8';
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#e0f2fe';
+        ctx.stroke();
+      }
+
+      spawnTimer++;
+      if (spawnTimer > Math.max(100, 160 - score * 3)) {
+        spawnObstacle();
+        spawnTimer = 0;
+      }
+
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obs = obstacles[i];
+        obs.x += obs.vx;
+        obs.y += obs.vy;
+
+        ctx.beginPath();
+        ctx.arc(obs.x, obs.y, obs.r, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444';
+        ctx.fill();
+
+        const dist = Math.hypot(player.x - obs.x, player.y - obs.y);
+        if (dist < player.radius + obs.r) {
+          if (player.invulnerable === 0) {
+            hp--;
+            document.getElementById('hpVal').innerText = hp;
+            player.invulnerable = 60;
+            playBeep(200, 0.2);
+            obstacles.splice(i, 1);
+            if (hp <= 0) {
+              gameOver();
+              return;
+            }
+          }
+          continue;
+        }
+
+        const passed = (obs.dir === 'up' && obs.y > CENTER_Y) ||
+                       (obs.dir === 'down' && obs.y < CENTER_Y) ||
+                       (obs.dir === 'left' && obs.x > CENTER_X) ||
+                       (obs.dir === 'right' && obs.x < CENTER_X);
+
+        if (passed) {
+          score++;
+          document.getElementById('scoreVal').innerText = score;
+          playBeep(880, 0.05);
+          obstacles.splice(i, 1);
+        }
+      }
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    function drawTracks() {
+      ctx.strokeStyle = trackGlowColor;
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(CENTER_X, 80); ctx.lineTo(CENTER_X, 380);
+      ctx.moveTo(80, CENTER_Y); ctx.lineTo(380, CENTER_Y);
+      ctx.stroke();
+
+      Object.values(LANES).forEach(p => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#475569';
+        ctx.fill();
+      });
+    }
+
+    function gameOver() {
+      isRunning = false;
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.85)';
+      ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 32px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('GAME OVER', CENTER_X, CENTER_Y - 10);
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '18px sans-serif';
+      ctx.fillText(`最終分數: ${score}`, CENTER_X, CENTER_Y + 30);
+      document.getElementById('msgVal').innerText = '挑戰結束';
+    }
+
+    drawTracks();
+  </script>
+</body>
+</html>
