@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <title>四向避障跑酷 - 體感互動遊戲</title>
-  <!-- 引入 TensorFlow.js 與 TM Pose SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.7.4/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.6/dist/teachablemachine-pose.min.js"></script>
+  <!-- 引入穩定相容版本的 TensorFlow.js 與 TM Pose SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.3/dist/teachablemachine-pose.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -84,23 +84,10 @@
       background: #000;
       border: 2px solid #334155;
     }
-    /* 原生視訊即時播放：確保不卡死並開啟鏡像翻轉 */
-    #webcamVideo {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
+    #webcamCanvas {
+      width: 260px;
+      height: 260px;
       transform: scaleX(-1);
-    }
-    /* 骨架覆蓋透明畫布 */
-    #poseCanvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      transform: scaleX(-1);
-      background: transparent !important;
-      pointer-events: none;
     }
 
     .hud-box {
@@ -145,16 +132,16 @@
     <button class="btn" id="startBtn" onclick="initSystem()">點擊啟動相機並開始</button>
   </header>
 
-  <!-- 要求 1：遊戲說明 -->
+  <!-- 遊戲操作說明 -->
   <div class="rules-card">
     <b>【遊戲操作說明】</b><br>
-    • <b>目標</b>：透過鏡頭比出身體姿勢，避開四周緩慢逼近的紅色障礙物。<br>
+    • <b>重要提醒</b>：本遊戲使用<b>姿勢骨架模型 (Pose)</b>，<b>請坐遠一點，確保鏡頭拍得到肩膀、雙手與胸口！</b><br>
     • <b>動作類別</b>：<br>
     &nbsp;&nbsp;1. <b>default (待機)</b>：回原點（中央待機）。<br>
     &nbsp;&nbsp;2. <b>up (上)</b>：手臂舉高過肩，切換至上方跑道。<br>
     &nbsp;&nbsp;3. <b>down (下)</b>：身體微蹲，切換至下方跑道。<br>
     &nbsp;&nbsp;4. <b>left (左) / right (右)</b>：手臂向左或向右側平舉。<br>
-    • <i>(請往後坐一點，確保鏡頭拍得到肩膀與雙手；亦可用鍵盤 ↑ ↓ ← → 輔助)</i>
+    • <i>(亦支援鍵盤 ↑ ↓ ← → 與 Space 作為備援操作)</i>
   </div>
 
   <div class="game-layout">
@@ -168,13 +155,11 @@
       <canvas id="gameCanvas" width="460" height="460"></canvas>
     </div>
 
-    <!-- 要求 2：攝影機畫面、辨識結果與信心度 -->
+    <!-- 攝影機畫面、辨識結果與信心度 -->
     <div class="card" style="width: 284px;">
       <div style="font-size: 0.85rem; margin-bottom: 6px; color: #94a3b8;">攝影機與骨架即時預覽</div>
       <div class="webcam-container">
-        <!-- 原生視訊保證流暢不卡死 -->
-        <video id="webcamVideo" autoplay playsinline muted></video>
-        <canvas id="poseCanvas" width="260" height="260"></canvas>
+        <canvas id="webcamCanvas" width="260" height="260"></canvas>
       </div>
       <div id="poseWarn"></div>
 
@@ -195,9 +180,8 @@
 
     const gameCanvas = document.getElementById('gameCanvas');
     const ctx = gameCanvas.getContext('2d');
-    const video = document.getElementById('webcamVideo');
-    const poseCanvas = document.getElementById('poseCanvas');
-    const poseCtx = poseCanvas.getContext('2d');
+    const webcamCanvas = document.getElementById('webcamCanvas');
+    const webcamCtx = webcamCanvas.getContext('2d');
     const poseWarn = document.getElementById('poseWarn');
 
     const CENTER_X = 230;
@@ -229,7 +213,7 @@
     let currentLaneName = 'default';
     let trackGlowColor = '#1e293b';
 
-    // 音效合成器 (要求 3)
+    // 音效合成器
     let audioCtx = null;
     function playBeep(freq = 440, duration = 0.08) {
       try {
@@ -248,49 +232,40 @@
       } catch (e) {}
     }
 
-    // --- 系統啟動流程 ---
+    // 模型與相機管理
     let model = null;
-    let isPredicting = false;
+    let webcam = null;
 
     async function initSystem() {
       const btn = document.getElementById('startBtn');
       btn.disabled = true;
-      btn.innerText = "啟動相機中...";
-      document.getElementById('msgVal').innerText = "啟動相機串流...";
+      btn.innerText = "載入模型中...";
+      document.getElementById('msgVal').innerText = "下載姿勢模型中...";
 
       try {
-        // 1. 開啟原生相機（確保瀏覽器硬體加速不卡死）
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false
-        });
-        video.srcObject = stream;
-        
-        await new Promise((resolve) => {
-          video.onloadedmetadata = () => {
-            video.play();
-            resolve();
-          };
-        });
-
-        // 2. 下載模型
-        btn.innerText = "載入模型中...";
-        document.getElementById('msgVal').innerText = "下載神經網路模型...";
+        // 1. 載入模型
         model = await tmPose.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+
+        // 2. 初始化官方規格相機 (260x260, 鏡像開啟)
+        btn.innerText = "啟動鏡頭中...";
+        const size = 260;
+        const flip = true; 
+        webcam = new tmPose.Webcam(size, size, flip);
+        await webcam.setup();
+        await webcam.play();
 
         btn.innerText = "重新開始遊戲";
         btn.disabled = false;
         document.getElementById('msgVal').innerText = "遊戲進行中";
 
         resetGame();
-        // 啟動兩個獨立的迴圈
         requestAnimationFrame(predictLoop);
         requestAnimationFrame(gameLoop);
       } catch (err) {
         console.error("啟動失敗：", err);
         btn.disabled = false;
         btn.innerText = "重試啟動";
-        alert("無法啟動相機或載入模型！請確認已允許攝影機權限。");
+        alert("啟動失敗！請檢查相機權限與網路連線。");
       }
     }
 
@@ -306,7 +281,7 @@
       let rawPose = top1.className.toLowerCase();
       const prob = top1.probability;
 
-      // 競態壓制（right 與 down 混淆處理）
+      // 競態抑制（針對易混淆的 right 與 down）
       if (top1.className === 'right' && top2.className === 'down') {
         if (top1.probability - top2.probability < 0.18) {
           rawPose = 'default';
@@ -316,7 +291,7 @@
       const threshold = (rawPose === 'right') ? 0.60 : 0.72;
       if (prob < threshold) rawPose = 'default';
 
-      // 信心度更新 (要求 2)
+      // 畫面資訊更新
       const percent = Math.round(prob * 100);
       document.getElementById('currentPoseVal').innerText = top1.className;
       document.getElementById('confidenceVal').innerText = `${percent}%`;
@@ -338,7 +313,6 @@
       }
     }
 
-    // 畫面變化 (要求 3)
     function changeLane(lane) {
       currentLaneName = lane;
       if (LANES[lane]) {
@@ -356,48 +330,45 @@
       }
     }
 
-    // 異步非阻塞推論迴圈（保證視訊畫面 100% 流暢不卡死）
+    // 官方推論迴圈
     async function predictLoop() {
-      if (video.readyState >= 2 && model && !isPredicting) {
-        isPredicting = true;
+      if (webcam && model) {
+        webcam.update();
+
+        // 1. 繪製畫面至 Canvas
+        webcamCtx.drawImage(webcam.canvas, 0, 0);
+
         try {
-          const { pose, posenetOutput } = await model.estimatePose(video);
+          // 2. 估算骨架
+          const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
           const prediction = await model.predict(posenetOutput);
 
-          // 繪製骨架到透明 Overlay
-          poseCtx.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+          // 3. 繪製骨架節點
           if (pose) {
-            const scaleX = poseCanvas.width / video.videoWidth;
-            const scaleY = poseCanvas.height / video.videoHeight;
+            const minPartConfidence = 0.35;
+            tmPose.drawKeypoints(pose.keypoints, minPartConfidence, webcamCtx);
+            tmPose.drawSkeleton(pose.keypoints, minPartConfidence, webcamCtx);
 
-            const scaledPose = {
-              ...pose,
-              keypoints: pose.keypoints.map(k => ({
-                ...k,
-                position: { x: k.position.x * scaleX, y: k.position.y * scaleY }
-              }))
-            };
-
-            tmPose.drawKeypoints(scaledPose.keypoints, 0.4, poseCtx);
-            tmPose.drawSkeleton(scaledPose.keypoints, 0.4, poseCtx);
-
-            const shoulders = pose.keypoints.filter(k => k.part.includes('shoulder') && k.score > 0.3);
+            const shoulders = pose.keypoints.filter(k => k.part.includes('shoulder') && k.score > 0.25);
             if (shoulders.length === 0) {
-              poseWarn.innerText = "⚠️ 請坐後一點，確保拍到肩膀！";
+              poseWarn.innerText = "⚠️ 請坐遠一點，確保鏡頭拍得到肩膀！";
             } else {
               poseWarn.innerText = "";
             }
+          } else {
+            poseWarn.innerText = "⚠️ 未偵測到人體骨架";
           }
+
+          // 4. 判定與平滑
           processPrediction(prediction);
         } catch (e) {
-          console.warn("推論畫格跳過：", e);
+          console.warn("推論畫格略過：", e);
         }
-        isPredicting = false;
       }
       requestAnimationFrame(predictLoop);
     }
 
-    // 鍵盤備援
+    // 鍵盤操作支援
     window.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowUp') changeLane('up');
       if (e.key === 'ArrowDown') changeLane('down');
@@ -406,7 +377,7 @@
       if (e.key === ' ') changeLane('default');
     });
 
-    // 遊戲重設
+    // 遊戲狀態重設
     function resetGame() {
       score = 0;
       hp = 3;
@@ -429,12 +400,11 @@
       if (rand < 0.29) dir = 'up';
       else if (rand < 0.58) dir = 'down';
       else if (rand < 0.88) dir = 'left';
-      else dir = 'right'; // 維持 right 較低生成率
+      else dir = 'right';
 
       const speed = 1.5 + Math.min(score * 0.04, 1.8);
       let obs = { dir, x: 0, y: 0, vx: 0, vy: 0, r: 15 };
 
-      // 嚴格在畫面邊界外生成，防止秒死
       if (dir === 'up')    { obs.x = CENTER_X; obs.y = -25; obs.vy = speed; }
       if (dir === 'down')  { obs.x = CENTER_X; obs.y = 485; obs.vy = -speed; }
       if (dir === 'left')  { obs.x = -25; obs.y = CENTER_Y; obs.vx = speed; }
@@ -544,7 +514,6 @@
       document.getElementById('msgVal').innerText = '挑戰結束';
     }
 
-    // 初始繪製
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
     drawTracks();
