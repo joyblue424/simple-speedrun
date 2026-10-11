@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <title>四向避障跑酷 - 虛擬相機相容版</title>
+  <title>四向避障跑酷 - 體感互動遊戲</title>
   <!-- 引入 TensorFlow.js 與 TM Pose SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.7.4/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.6/dist/teachablemachine-pose.min.js"></script>
@@ -112,6 +112,8 @@
       object-fit: cover;
       transform: scaleX(-1);
     }
+    
+    /* 核心修復：強制讓骨架畫布背景為完全透明 */
     #poseOverlay {
       position: absolute;
       top: 0;
@@ -119,6 +121,8 @@
       width: 100%;
       height: 100%;
       transform: scaleX(-1);
+      background: transparent !important;
+      pointer-events: none;
     }
 
     .hud-box {
@@ -153,11 +157,11 @@
 
   <header>
     <h1>🏃 體感四向跑酷遊戲</h1>
-    <button class="btn" id="startBtn" onclick="initSystem()">啟動攝影機</button>
+    <button class="btn" id="startBtn" onclick="initSystem()">點擊啟動相機並開始</button>
   </header>
 
   <div class="toolbar">
-    <label for="cameraSelect" style="font-size: 0.85rem;">選擇攝影機設備：</label>
+    <label for="cameraSelect" style="font-size: 0.85rem;">切換攝影機設備：</label>
     <select id="cameraSelect" onchange="changeCamera()"></select>
     <span id="camStatus" style="font-size: 0.85rem; color: #38bdf8;">等待啟動...</span>
   </div>
@@ -167,7 +171,7 @@
     • <b>目標</b>：透過鏡頭比出身體姿勢，避開四周緩慢逼近的紅色障礙物。<br>
     • <b>動作類別（本專案訓練 5 種動作）</b>：<br>
     &nbsp;&nbsp;1. <b>default (待機)</b>：雙手自然垂下放鬆回原點。<br>
-    &nbsp;&nbsp;2. <b>up (上)</b>：雙手舉高過頭切換至上軌道。<br>
+    &nbsp;&nbsp;2. <b>up (上)</b>：雙手高舉過頭切換至上軌道。<br>
     &nbsp;&nbsp;3. <b>down (下)</b>：身體微蹲切換至下軌道。<br>
     &nbsp;&nbsp;4. <b>left (左) / right (右)</b>：手臂向左或向右側平舉。<br>
     • <i>(亦支援鍵盤 ↑ ↓ ← → 與 Space 作為備援操作)</i>
@@ -179,7 +183,7 @@
       <div class="hud-box">
         <span>分數: <span id="scoreVal" class="hud-tag">0</span></span>
         <span>生命: <span id="hpVal" class="hud-tag">3</span></span>
-        <span>提示訊息: <span id="msgVal" class="hud-tag">點擊上方按鈕開始</span></span>
+        <span>提示訊息: <span id="msgVal" class="hud-tag">請點擊上方按鈕開始</span></span>
       </div>
       <canvas id="gameCanvas" width="460" height="460"></canvas>
     </div>
@@ -264,7 +268,6 @@
       } catch (e) {}
     }
 
-    // 列出可用的相機列表
     async function listCameras() {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(d => d.kind === 'videoinput');
@@ -277,7 +280,6 @@
       });
     }
 
-    // 啟動相機（解除特定解析度限制，相容手機虛擬鏡頭）
     async function startCamera(deviceId = null) {
       if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
@@ -294,7 +296,7 @@
       return new Promise((resolve) => {
         video.onloadedmetadata = () => {
           video.play();
-          camStatus.innerText = "相機正常連線";
+          camStatus.innerText = "相機已連線";
           resolve();
         };
       });
@@ -303,40 +305,40 @@
     async function changeCamera() {
       const deviceId = cameraSelect.value;
       if (deviceId) {
-        camStatus.innerText = "切換鏡頭中...";
+        camStatus.innerText = "切換中...";
         await startCamera(deviceId);
       }
     }
 
-    // --- 模型載入與啟動 ---
+    // --- 系統啟動流程 ---
     let model = null;
     async function initSystem() {
       const btn = document.getElementById('startBtn');
       btn.disabled = true;
-      btn.innerText = "連線相機中...";
+      btn.innerText = "啟動相機中...";
       camStatus.innerText = "請求相機權限...";
 
       try {
         await startCamera();
         await listCameras();
 
-        camStatus.innerText = "相機已啟動，下載姿勢模型...";
+        camStatus.innerText = "載入模型中...";
         btn.innerText = "下載模型中...";
 
         model = await tmPose.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
-        camStatus.innerText = "系統運行中";
-        btn.innerText = "重新開始";
+        camStatus.innerText = "運行中";
+        btn.innerText = "重新開始遊戲";
         btn.disabled = false;
 
         resetGame();
         window.requestAnimationFrame(predictLoop);
         window.requestAnimationFrame(gameLoop);
       } catch (err) {
-        console.error("啟動錯誤：", err);
-        camStatus.innerText = "相機啟動失敗";
+        console.error("啟動失敗：", err);
+        camStatus.innerText = "啟動失敗";
         btn.disabled = false;
         btn.innerText = "重試啟動";
-        alert("無法啟動相機！請確認：\n1. 網址列右上角相機圖示已設定為『一律允許』。\n2. Windows『手機連結』應用程式上的 S25 相機畫面正常未關閉。");
+        alert("無法啟動相機！請確認已允許攝影機權限。");
       }
     }
 
@@ -406,6 +408,7 @@
           const { pose, posenetOutput } = await model.estimatePose(video);
           const prediction = await model.predict(posenetOutput);
 
+          // 保持畫布清空為透明
           poseCtx.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
           if (pose) {
             tmPose.drawKeypoints(pose.keypoints, 0.5, poseCtx);
@@ -427,7 +430,7 @@
       if (e.key === ' ') changeLane('default');
     });
 
-    // 遊戲重設與邏輯
+    // 遊戲重設
     function resetGame() {
       score = 0;
       hp = 3;
@@ -564,6 +567,9 @@
       document.getElementById('msgVal').innerText = '挑戰結束';
     }
 
+    // 初始清空畫布，不畫 GAME OVER
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
     drawTracks();
   </script>
 </body>
