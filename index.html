@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <title>體感 3D 跑酷 - 清晰動作指示版</title>
+  <title>體感 3D 跑酷 - 完整遊戲說明版</title>
   <!-- 引入最新版 TensorFlow.js 與 Teachable Machine Image SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
@@ -39,6 +39,41 @@
       align-items: center;
       font-size: 0.9rem;
     }
+
+    /* 遊戲玩法與規則說明卡片 */
+    .rules-card {
+      background: #1e293b;
+      padding: 14px 18px;
+      border-radius: 8px;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 14px;
+      font-size: 0.88rem;
+      line-height: 1.6;
+      border-left: 4px solid #38bdf8;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+    }
+    .rules-card h3 {
+      color: #38bdf8;
+      font-size: 1rem;
+      margin-bottom: 6px;
+    }
+    .action-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .action-item {
+      background: #0f172a;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+    }
+    .action-item b {
+      color: #f59e0b;
+    }
+
     .btn {
       background: #0284c7;
       color: white;
@@ -120,13 +155,39 @@
 <body>
 
   <header>
-    <h1>🏃 體感 3D 跑酷 (視覺清晰升級版)</h1>
+    <h1>🏃 體感 3D 跑酷 (Temple Run 風格)</h1>
     <button class="btn" id="startBtn" onclick="initSystem()">啟動相機並開始遊戲</button>
   </header>
 
   <div class="status-bar">
-    <span>模型：<b style="color: #10b981;">ShkEL2fta (Image 模型已綁定)</b></span>
-    <span>系統狀態：<span id="sysStatus" class="hud-tag">點擊按鈕開始</span></span>
+    <span>模型來源：<b style="color: #10b981;">ShkEL2fta (Image 專案)</b></span>
+    <span>系統狀態：<span id="sysStatus" class="hud-tag">點擊上方按鈕開始</span></span>
+  </div>
+
+  <!-- 完整的文字遊戲與操作說明區塊 -->
+  <div class="rules-card">
+    <h3>📖 遊戲玩法與手勢操作說明</h3>
+    <p>• <b>遊戲目標</b>：小人在 3D 跑道上持續向前衝刺，玩家需透過手勢控制小人動作，避開迎面而來的障礙物！</p>
+    <div class="action-grid">
+      <div class="action-item">
+        <b>⬆️ up (跳躍)</b>：<br>躍過【田徑跳欄】
+      </div>
+      <div class="action-item">
+        <b>⬇️ down (蹲下)</b>：<br>滑行鑽過【高架門牌】
+      </div>
+      <div class="action-item">
+        <b>⬅️ left (左移)</b>：<br>切換至左跑道避開【木箱】
+      </div>
+      <div class="action-item">
+        <b>➡️ right (右移)</b>：<br>切換至右跑道避開【木箱】
+      </div>
+      <div class="action-item">
+        <b>🔄 default (待機)</b>：<br>手放下，小人回中央奔跑
+      </div>
+    </div>
+    <p style="font-size: 0.82rem; color: #94a3b8; margin-top: 4px;">
+      💡 <b>操作小提示</b>：請自然坐在電腦前，手部進入鏡頭畫面正中央比劃手勢；同時支援鍵盤 <b>↑、↓、←、→</b> 與 <b>Space</b> 進行輔助操作。
+    </p>
   </div>
 
   <div class="game-layout">
@@ -135,7 +196,7 @@
       <div class="hud-box">
         <span>得分: <span id="scoreVal" class="hud-tag">0</span></span>
         <span>生命: <span id="hpVal" class="hud-tag">3</span></span>
-        <span>小人動作: <span id="actionVal" class="hud-tag">正常跑步</span></span>
+        <span>小人狀態: <span id="actionVal" class="hud-tag">正常跑步</span></span>
       </div>
       <canvas id="gameCanvas" width="480" height="520"></canvas>
     </div>
@@ -269,7 +330,7 @@
     async function initSystem() {
       const btn = document.getElementById('startBtn');
       btn.disabled = true;
-      sysStatus.innerText = "正在載入模型...";
+      sysStatus.innerText = "載入模型中...";
 
       try {
         const modelURL = FIXED_MODEL_URL + "model.json";
@@ -278,7 +339,6 @@
         model = await tmImage.load(modelURL, metadataURL);
         sysStatus.innerText = "模型載入成功，啟動鏡頭...";
 
-        // flip = true 為標準自拍鏡像
         const size = 260;
         const flip = true; 
         webcam = new tmImage.Webcam(size, size, flip);
@@ -295,7 +355,7 @@
       } catch (err) {
         console.error(err);
         btn.disabled = false;
-        sysStatus.innerText = "載入失敗";
+        sysStatus.innerText = "啟動失敗";
         alert("相機啟動或模型載入失敗，請確認已允許攝影機權限！");
       }
     }
@@ -316,7 +376,7 @@
           document.getElementById('confidenceVal').innerText = `${percent}%`;
           document.getElementById('confidenceBar').style.width = `${percent}%`;
 
-          // 信心度門檻即時驅動
+          // 信心度大於 0.58 即時觸發動作
           if (top.probability > 0.58) {
             applyPoseImmediate(top.className);
           }
@@ -346,7 +406,7 @@
     }
 
     function spawnObstacle() {
-      // hurdle: 跳欄(跳躍) | banner: 懸掛路標(蹲下) | crate: 施工木箱(切換跑道閃避)
+      // hurdle: 跳欄 (跳躍) | banner: 高門牌 (蹲下) | crate: 木箱 (閃左右)
       const types = ['hurdle', 'banner', 'crate'];
       const type = types[Math.floor(Math.random() * types.length)];
       const lane = Math.floor(Math.random() * 3);
@@ -363,7 +423,7 @@
 
       drawTrack();
 
-      // 小人切換跑道插值平滑
+      // 小人跑道切換插值平滑
       runner.currentX += (LANES_X[runner.lane] - runner.currentX) * 0.25;
 
       // 跳躍平滑動畫
@@ -377,14 +437,14 @@
         if (runner.jumpOffset < 0) runner.jumpOffset = 0;
       }
 
-      // 生成障礙物 (適當間距，確保有反應時間)
+      // 生成障礙物
       spawnTimer++;
       if (spawnTimer > Math.max(80, 130 - score * 2)) {
         spawnObstacle();
         spawnTimer = 0;
       }
 
-      // 找出離玩家最近的前方障礙物，觸發頂部即時警報提示
+      // 偵測前方最近障礙物並更新提示
       let closestObstacle = null;
       let minDistance = 999;
 
@@ -409,25 +469,21 @@
         currentAlertText = "";
       }
 
-      // 更新障礙物移動與繪製
+      // 更新障礙物移動與判定
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
         obs.z += 0.011 + Math.min(score * 0.0004, 0.012);
 
         drawClearObstacle(obs);
 
-        // 碰撞檢測區間 (接近玩家 z: 0.85 ~ 0.98)
         if (obs.z >= 0.85 && obs.z <= 0.98) {
           let hit = false;
 
           if (obs.type === 'crate') {
-            // 單道木箱：同跑道則撞擊
             if (runner.lane === obs.lane) hit = true;
           } else if (obs.type === 'hurdle') {
-            // 跳欄：同跑道且沒有跳躍則撞擊
             if (runner.lane === obs.lane && runner.jumpOffset < 28) hit = true;
           } else if (obs.type === 'banner') {
-            // 橫額牌：同跑道且沒有蹲下滑行則撞擊
             if (runner.lane === obs.lane && !runner.isSliding) hit = true;
           }
 
@@ -445,7 +501,6 @@
           }
         }
 
-        // 超越玩家加分
         if (obs.z > 1.05) {
           score++;
           document.getElementById('scoreVal').innerText = score;
@@ -454,10 +509,7 @@
         }
       }
 
-      // 繪製奔跑小人
       drawRunner();
-
-      // 繪製頂部動態動作警報提示
       drawAlertBanner();
 
       if (runner.invulnerable > 0) runner.invulnerable--;
@@ -480,7 +532,7 @@
       ctx.fillStyle = '#1e293b';
       ctx.fill();
 
-      // 跑道亮藍邊緣線
+      // 跑道藍色邊緣線
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -488,7 +540,7 @@
       ctx.moveTo(300, horizonY); ctx.lineTo(440, 520);
       ctx.stroke();
 
-      // 跑道分道白虛線
+      // 分道虛線
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 2;
       ctx.setLineDash([16, 16]);
@@ -498,7 +550,7 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // 速度滾動橫線
+      // 地面滾動線
       groundScroll = (groundScroll + 4.5) % 40;
       for (let y = horizonY + groundScroll; y < 520; y += 40) {
         const factor = (y - horizonY) / (520 - horizonY);
@@ -512,13 +564,12 @@
       }
     }
 
-    // --- 繪製小人 (帶跳躍影子與跑步擺動) ---
+    // --- 繪製小人 ---
     function drawRunner() {
       const x = runner.currentX;
       const groundY = runner.y;
       const y = groundY - runner.jumpOffset;
 
-      // 繪製地面的陰影（跳得越高影子越小越淡）
       const shadowScale = Math.max(0.4, 1 - runner.jumpOffset / 80);
       ctx.save();
       ctx.translate(x, groundY + 12);
@@ -529,7 +580,7 @@
       ctx.restore();
 
       if (runner.invulnerable > 0 && Math.floor(runner.invulnerable / 5) % 2 === 0) {
-        return; // 無敵閃爍
+        return;
       }
 
       runner.runAnim += 0.22;
@@ -539,7 +590,6 @@
       ctx.translate(x, y);
 
       if (runner.isSliding) {
-        // 蹲下滑行姿態 (扁平藍色膠囊體 + 低伏頭部)
         ctx.fillStyle = '#38bdf8';
         ctx.beginPath();
         ctx.ellipse(0, 8, 22, 9, 0, 0, Math.PI * 2);
@@ -549,7 +599,6 @@
         ctx.arc(14, 4, 7, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        // 正常奔跑姿態
         ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
         ctx.arc(0, -32, 10, 0, Math.PI * 2);
@@ -580,7 +629,7 @@
       ctx.restore();
     }
 
-    // --- 繪製清晰、易辨識的單道障礙物與氣泡提示 ---
+    // --- 繪製單軌障礙物與氣泡標籤 ---
     function drawClearObstacle(obs) {
       const horizonY = 160;
       const z = obs.z;
@@ -597,25 +646,22 @@
       ctx.scale(scale, scale);
 
       if (obs.type === 'crate') {
-        // 1. 單軌木質路障（避開 LEFT / RIGHT）
+        // 木箱路障
         ctx.fillStyle = '#b45309';
         ctx.fillRect(-22, -32, 44, 32);
         ctx.strokeStyle = '#fef08a';
         ctx.lineWidth = 3;
         ctx.strokeRect(-22, -32, 44, 32);
 
-        // 木箱對角線
         ctx.beginPath();
         ctx.moveTo(-22, -32); ctx.lineTo(22, 0);
         ctx.moveTo(22, -32); ctx.lineTo(-22, 0);
         ctx.stroke();
 
-        // 標籤氣泡
         drawPromptBadge(0, -52, "⚠️ 換道閃避", "#ef4444");
 
       } else if (obs.type === 'hurdle') {
-        // 2. 田徑跳欄（比 UP 跳躍）- 清晰白橘相間條紋，無滿版紅刺
-        // 兩側立腳
+        // 田徑跳欄
         ctx.strokeStyle = '#475569';
         ctx.lineWidth = 4;
         ctx.beginPath();
@@ -623,18 +669,15 @@
         ctx.moveTo(24, 0); ctx.lineTo(24, -22);
         ctx.stroke();
 
-        // 橫桿
         ctx.fillStyle = '#f97316';
         ctx.fillRect(-26, -24, 52, 9);
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(-10, -24, 20, 9);
 
-        // 標籤氣泡
         drawPromptBadge(0, -48, "⬆️ 跳躍 (UP)", "#f59e0b");
 
       } else if (obs.type === 'banner') {
-        // 3. 高空門牌橫額（比 DOWN 蹲下）- 底下完全淨空，清楚表示可從下方穿過
-        // 兩側金屬高立柱
+        // 高架門牌
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -642,27 +685,23 @@
         ctx.moveTo(26, 0); ctx.lineTo(26, -58);
         ctx.stroke();
 
-        // 頂部橫牌
         ctx.fillStyle = '#0369a1';
         ctx.fillRect(-28, -58, 56, 18);
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 2;
         ctx.strokeRect(-28, -58, 56, 18);
 
-        // 橫牌文字
         ctx.fillStyle = '#f8fafc';
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText("LOW LIMIT", 0, -46);
 
-        // 標籤氣泡
         drawPromptBadge(0, -78, "⬇️ 蹲下 (DOWN)", "#10b981");
       }
 
       ctx.restore();
     }
 
-    // 障礙物上方懸浮指引氣泡
     function drawPromptBadge(bx, by, text, bgColor) {
       ctx.save();
       ctx.font = 'bold 12px sans-serif';
@@ -685,7 +724,6 @@
       ctx.restore();
     }
 
-    // 畫面頂端即時動態提示條
     function drawAlertBanner() {
       if (!currentAlertText) return;
 
