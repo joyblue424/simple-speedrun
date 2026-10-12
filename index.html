@@ -2,9 +2,10 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <title>體感 3D 跑酷 - 鏡像方向修正版</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.3/dist/teachablemachine-pose.min.js"></script>
+  <title>體感 3D 跑酷 - Image 手勢版</title>
+  <!-- 引入最新版 TensorFlow.js 與 Teachable Machine Image SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -37,11 +38,23 @@
       line-height: 1.5;
       border-left: 4px solid #38bdf8;
     }
+    .status-bar {
+      background: #1e293b;
+      padding: 10px 16px;
+      border-radius: 8px;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.9rem;
+    }
     .btn {
       background: #0284c7;
       color: white;
       border: none;
-      padding: 8px 18px;
+      padding: 8px 20px;
       border-radius: 6px;
       cursor: pointer;
       font-weight: 600;
@@ -75,7 +88,6 @@
     #gameCanvas { width: 480px; height: 520px; }
     
     .webcam-container {
-      position: relative;
       width: 260px;
       height: 260px;
       border-radius: 8px;
@@ -83,7 +95,6 @@
       background: #000;
       border: 2px solid #334155;
     }
-    /* 核心修復：徹底移除 transform: scaleX(-1)，避免雙重翻轉 */
     #webcamCanvas {
       width: 260px;
       height: 260px;
@@ -120,40 +131,47 @@
 <body>
 
   <header>
-    <h1>🏃 體感 3D 跑酷遊戲 (鏡像修正版)</h1>
-    <button class="btn" id="startBtn" onclick="initSystem()">點擊啟動相機並開始</button>
+    <h1>🏃 體感 3D 跑酷遊戲 (Image 手勢版)</h1>
+    <button class="btn" id="startBtn" onclick="initSystem()">啟動相機並開始遊戲</button>
   </header>
 
+  <div class="status-bar">
+    <span>模型：<b style="color: #10b981;">ShkEL2fta (Image 專案已就緒)</b></span>
+    <span>狀態：<span id="sysStatus" class="hud-tag">點擊按鈕啟動</span></span>
+  </div>
+
   <div class="rules-card">
-    <b>【遊戲操作說明（照鏡子視角）】</b><br>
-    • <b>目標</b>：小人不斷往前衝刺，用肢體控制小人閃避迎面而來的障礙物！<br>
-    • <b>動作對應</b>：<br>
-    &nbsp;&nbsp;• <b>up（向上跳躍）</b>：手臂向上舉起，小人跳躍避開地刺。<br>
-    &nbsp;&nbsp;• <b>down（滑行蹲下）</b>：身體微蹲，小人蹲下避開高架橫樑。<br>
-    &nbsp;&nbsp;• <b>left（左移跑道） / right（右移跑道）</b>：向左或向右側平舉手臂切換跑道避開巨石。<br>
-    &nbsp;&nbsp;• <b>default（正常跑步）</b>：雙手放下，回歸中央跑道正常奔跑。<br>
-    • <i>(亦支援鍵盤 ↑ ↓ ← → 與 Space 作為測試操作)</i>
+    <b>【遊戲操作說明（手勢自拍視角）】</b><br>
+    • <b>坐在螢幕前即可操作</b>：請在鏡頭前方清楚比出手勢。<br>
+    • <b>手勢對應動作</b>：<br>
+    &nbsp;&nbsp;• <b>up（向上跳躍）</b>：比出「向上」手勢，跳躍躍過矮木地刺。<br>
+    &nbsp;&nbsp;• <b>down（滑行蹲下）</b>：比出「向下」手勢，小人蹲下滑行通過高架橫樑。<br>
+    &nbsp;&nbsp;• <b>left（左移跑道） / right（右移跑道）</b>：比出「向左」或「向右」手勢切換跑道閃避巨石。<br>
+    &nbsp;&nbsp;• <b>default（中央奔跑）</b>：手放下放鬆，小人回中央跑道正常奔跑。<br>
+    • <i>(亦支援鍵盤 ↑ ↓ ← → 與 Space 作為備援測試)</i>
   </div>
 
   <div class="game-layout">
+    <!-- 主遊戲畫面 -->
     <div class="card">
       <div class="hud-box">
         <span>分數: <span id="scoreVal" class="hud-tag">0</span></span>
         <span>生命: <span id="hpVal" class="hud-tag">3</span></span>
-        <span>小人動作: <span id="actionVal" class="hud-tag">跑步中</span></span>
+        <span>小人狀態: <span id="actionVal" class="hud-tag">跑步中</span></span>
       </div>
       <canvas id="gameCanvas" width="480" height="520"></canvas>
     </div>
 
+    <!-- 即時攝影機畫面與辨識數據 -->
     <div class="card" style="width: 284px;">
-      <div style="font-size: 0.85rem; margin-bottom: 6px; color: #94a3b8;">攝影機（照鏡子視角）與骨架</div>
+      <div style="font-size: 0.85rem; margin-bottom: 6px; color: #94a3b8;">即時攝影機視訊（自拍鏡像）</div>
       <div class="webcam-container">
         <canvas id="webcamCanvas" width="260" height="260"></canvas>
       </div>
 
       <div class="hud-box" style="flex-direction: column; gap: 4px; margin-top: 10px;">
         <div style="display: flex; justify-content: space-between;">
-          <span>偵測動作: <b id="currentPoseVal" style="color: #f59e0b;">待機中</b></span>
+          <span>辨識手勢: <b id="currentPoseVal" style="color: #f59e0b;">待機中</b></span>
           <span>信心度: <b id="confidenceVal">0%</b></span>
         </div>
         <div class="confidence-meter">
@@ -164,14 +182,16 @@
   </div>
 
   <script>
-    const MODEL_URL = "https://teachablemachine.withgoogle.com/models/ccGXFMyGc/";
+    // 固定綁定新的 Image 模型專屬網址
+    const FIXED_MODEL_URL = "https://teachablemachine.withgoogle.com/models/ShkEL2fta/";
 
     const gameCanvas = document.getElementById('gameCanvas');
     const ctx = gameCanvas.getContext('2d');
     const webcamCanvas = document.getElementById('webcamCanvas');
     const webcamCtx = webcamCanvas.getContext('2d');
+    const sysStatus = document.getElementById('sysStatus');
 
-    // --- 音效模組 ---
+    // --- 音效模組 (Web Audio API) ---
     let audioCtx = null;
     function playBeep(freq = 440, duration = 0.08) {
       try {
@@ -190,7 +210,7 @@
       } catch (e) {}
     }
 
-    // --- 跑道與小人設定 ---
+    // --- 跑道與跑者數據 ---
     const LANES_X = [140, 240, 340];
     
     let runner = {
@@ -212,16 +232,15 @@
     let groundScroll = 0;
     let lastAppliedPose = '';
 
-    // 即時動作反應（零延遲）
+    // 即時套用手勢動作
     function applyPoseImmediate(pose) {
-      const p = pose.toLowerCase();
+      const p = pose.toLowerCase().trim();
 
       let actionText = "跑步中";
       if (p === 'up') actionText = "跳躍！";
       else if (p === 'down') actionText = "滑行蹲下！";
       else if (p === 'left') actionText = "向左移";
       else if (p === 'right') actionText = "向右移";
-      else actionText = "跑步中";
       document.getElementById('actionVal').innerText = actionText;
 
       if (p === lastAppliedPose) return;
@@ -231,12 +250,12 @@
         case 'up':
           runner.isJumping = true;
           runner.isSliding = false;
-          playBeep(600, 0.08);
+          playBeep(620, 0.08);
           break;
         case 'down':
           runner.isSliding = true;
           runner.isJumping = false;
-          playBeep(350, 0.08);
+          playBeep(330, 0.08);
           break;
         case 'left':
           runner.lane = 0;
@@ -265,26 +284,31 @@
       if (e.key === ' ') applyPoseImmediate('default');
     });
 
-    // --- 相機啟動 ---
+    // --- tmImage 圖像模型初始化 ---
     let model = null;
     let webcam = null;
 
     async function initSystem() {
       const btn = document.getElementById('startBtn');
       btn.disabled = true;
-      btn.innerText = "載入模型中...";
+      sysStatus.innerText = "載入模型中...";
 
       try {
-        model = await tmPose.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+        const modelURL = FIXED_MODEL_URL + "model.json";
+        const metadataURL = FIXED_MODEL_URL + "metadata.json";
 
-        // flip = true 保留 TM 原生翻轉，搭配乾淨的 Canvas CSS 達到標準鏡像
-        btn.innerText = "啟動鏡頭中...";
+        // 使用 tmImage 引擎載入圖像分類模型
+        model = await tmImage.load(modelURL, metadataURL);
+        sysStatus.innerText = "模型載入完成，正在啟動鏡頭...";
+
+        // flip = true 為標準自拍鏡像模式
         const size = 260;
         const flip = true; 
-        webcam = new tmPose.Webcam(size, size, flip);
+        webcam = new tmImage.Webcam(size, size, flip);
         await webcam.setup();
         await webcam.play();
 
+        sysStatus.innerText = "遊戲運行中";
         btn.innerText = "重新開始遊戲";
         btn.disabled = false;
 
@@ -294,27 +318,21 @@
       } catch (err) {
         console.error(err);
         btn.disabled = false;
-        btn.innerText = "重試啟動";
-        alert("啟動失敗！請確認相機權限已開啟。");
+        sysStatus.innerText = "啟動失敗，請確認網路連線";
+        alert("無法啟動相機或載入模型！請確認已允許攝影機權限。");
       }
     }
 
+    // 圖像推論迴圈（省去骨架運算，直截辨識畫格）
     async function predictLoop() {
       if (webcam && model) {
         webcam.update();
         webcamCtx.drawImage(webcam.canvas, 0, 0);
 
         try {
-          const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
-          const prediction = await model.predict(posenetOutput);
+          const prediction = await model.predict(webcam.canvas);
 
-          // 繪製骨架節點
-          if (pose) {
-            tmPose.drawKeypoints(pose.keypoints, 0.35, webcamCtx);
-            tmPose.drawSkeleton(pose.keypoints, 0.35, webcamCtx);
-          }
-
-          // 排序最高信心度
+          // 排序最高機率
           const sorted = [...prediction].sort((a, b) => b.probability - a.probability);
           const top = sorted[0];
 
@@ -323,8 +341,8 @@
           document.getElementById('confidenceVal').innerText = `${percent}%`;
           document.getElementById('confidenceBar').style.width = `${percent}%`;
 
-          // 信心度超過門檻即刻觸發動作
-          if (top.probability > 0.55) {
+          // 信心度大於 0.6 即時驅動動作
+          if (top.probability > 0.6) {
             applyPoseImmediate(top.className);
           }
         } catch (e) {}
@@ -351,7 +369,9 @@
       document.getElementById('actionVal').innerText = "跑步中";
     }
 
+    // 生成 Temple Run 風格障礙物
     function spawnObstacle() {
+      // rock: 單軌巨石(避左右) | low_hurdle: 全跑道矮刺(跳躍) | high_bar: 全跑道橫樑(滑行)
       const types = ['rock', 'low_hurdle', 'high_bar'];
       const type = types[Math.floor(Math.random() * types.length)];
       const lane = Math.floor(Math.random() * 3);
@@ -368,10 +388,10 @@
 
       drawTempleRunTrack();
 
-      // 小人切換跑道插值平滑
+      // 角色換道平滑插值
       runner.currentX += (LANES_X[runner.lane] - runner.currentX) * 0.25;
 
-      // 跳躍平滑動畫
+      // 跳躍重力物理
       if (runner.isJumping) {
         runner.jumpOffset += 4;
         if (runner.jumpOffset > 55) {
@@ -384,7 +404,7 @@
 
       drawRunner();
 
-      // 生成障礙物
+      // 障礙物生成節奏
       spawnTimer++;
       if (spawnTimer > Math.max(75, 120 - score * 2)) {
         spawnObstacle();
@@ -403,11 +423,14 @@
           let hit = false;
 
           if (obs.type === 'rock') {
+            // 巨石：若小人在同一條跑道則撞擊
             if (runner.lane === obs.lane) hit = true;
           } else if (obs.type === 'low_hurdle') {
-            if (runner.lane === obs.lane && runner.jumpOffset < 25) hit = true;
+            // 矮地刺：橫跨跑道，若未跳起則撞擊
+            if (runner.jumpOffset < 28) hit = true;
           } else if (obs.type === 'high_bar') {
-            if (runner.lane === obs.lane && !runner.isSliding) hit = true;
+            // 高橫樑：橫跨跑道，若未滑行蹲下則撞擊
+            if (!runner.isSliding) hit = true;
           }
 
           if (hit && runner.invulnerable === 0) {
@@ -424,7 +447,7 @@
           }
         }
 
-        // 成功避開得分
+        // 成功穿越得分
         if (obs.z > 1.05) {
           score++;
           document.getElementById('scoreVal').innerText = score;
@@ -437,14 +460,14 @@
       requestAnimationFrame(gameLoop);
     }
 
-    // 繪製跑道
+    // 繪製 3D 透視跑道
     function drawTempleRunTrack() {
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
 
       const horizonY = 160;
 
-      // 跑道底板
+      // 跑道底板 (梯形透視)
       ctx.beginPath();
       ctx.moveTo(180, horizonY);
       ctx.lineTo(300, horizonY);
@@ -453,7 +476,7 @@
       ctx.fillStyle = '#1e293b';
       ctx.fill();
 
-      // 跑道外緣線
+      // 外緣主線
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -485,13 +508,13 @@
       }
     }
 
-    // 繪製小人
+    // 繪製跑動小人
     function drawRunner() {
       const x = runner.currentX;
       const y = runner.y - runner.jumpOffset;
 
       if (runner.invulnerable > 0 && Math.floor(runner.invulnerable / 5) % 2 === 0) {
-        return;
+        return; // 無敵閃爍
       }
 
       runner.runAnim += 0.2;
@@ -501,7 +524,7 @@
       ctx.translate(x, y);
 
       if (runner.isSliding) {
-        // 蹲下滑行姿態
+        // 滑行蹲下姿態
         ctx.fillStyle = '#38bdf8';
         ctx.beginPath();
         ctx.ellipse(0, 10, 22, 10, 0, 0, Math.PI * 2);
@@ -511,7 +534,7 @@
         ctx.arc(12, 5, 8, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        // 正常站立奔跑小人
+        // 站立奔跑小人
         ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
         ctx.arc(0, -32, 10, 0, Math.PI * 2);
@@ -551,14 +574,16 @@
       const factor = (y - horizonY) / (520 - horizonY);
       const laneWidth = (300 - 180 + (440 - 40 - (300 - 180)) * factor) / 3;
       const leftBoundary = 180 - (180 - 40) * factor;
+      const rightBoundary = 300 + (440 - 300) * factor;
       const x = leftBoundary + laneWidth * obs.lane + laneWidth / 2;
       const scale = 0.3 + z * 0.9;
 
       ctx.save();
-      ctx.translate(x, y);
-      ctx.scale(scale, scale);
 
       if (obs.type === 'rock') {
+        // 單軌巨石
+        ctx.translate(x, y);
+        ctx.scale(scale, scale);
         ctx.fillStyle = '#ef4444';
         ctx.beginPath();
         ctx.arc(0, -15, 20, 0, Math.PI * 2);
@@ -567,21 +592,40 @@
         ctx.lineWidth = 3;
         ctx.stroke();
       } else if (obs.type === 'low_hurdle') {
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(-22, -8, 44, 10);
+        // 橫跨全軌道的地刺矮障礙 (需 UP 跳躍)
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 8 * scale;
+        ctx.beginPath();
+        ctx.moveTo(leftBoundary, y);
+        ctx.lineTo(rightBoundary, y);
+        ctx.stroke();
+
+        // 尖刺細節
         ctx.fillStyle = '#dc2626';
-        ctx.beginPath();
-        ctx.moveTo(-15, -8); ctx.lineTo(-10, -20); ctx.lineTo(-5, -8);
-        ctx.moveTo(5, -8); ctx.lineTo(10, -20); ctx.lineTo(15, -8);
-        ctx.fill();
+        const spikes = 6;
+        const step = (rightBoundary - leftBoundary) / spikes;
+        for (let i = 0; i < spikes; i++) {
+          const sx = leftBoundary + i * step + step / 2;
+          ctx.beginPath();
+          ctx.moveTo(sx - 8 * scale, y);
+          ctx.lineTo(sx, y - 20 * scale);
+          ctx.lineTo(sx + 8 * scale, y);
+          ctx.fill();
+        }
       } else if (obs.type === 'high_bar') {
+        // 橫跨全軌道的高橫樑 (需 DOWN 蹲下)
+        const barHeight = 45 * scale;
         ctx.fillStyle = '#8b5cf6';
-        ctx.fillRect(-26, -55, 52, 12);
+        ctx.fillRect(leftBoundary, y - barHeight - 12 * scale, rightBoundary - leftBoundary, 12 * scale);
+
+        // 兩側立柱
         ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 4 * scale;
         ctx.beginPath();
-        ctx.moveTo(-22, -55); ctx.lineTo(-22, 0);
-        ctx.moveTo(22, -55); ctx.lineTo(22, 0);
+        ctx.moveTo(leftBoundary + 4, y);
+        ctx.lineTo(leftBoundary + 4, y - barHeight);
+        ctx.moveTo(rightBoundary - 4, y);
+        ctx.lineTo(rightBoundary - 4, y - barHeight);
         ctx.stroke();
       }
 
@@ -602,6 +646,7 @@
       document.getElementById('actionVal').innerText = "撞毀停止";
     }
 
+    // 初次載入渲染跑道
     drawTempleRunTrack();
   </script>
 </body>
